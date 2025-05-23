@@ -303,53 +303,43 @@ open class FTPFileProvider: NSObject, FileProviderBasicRemote, FileProviderOpera
                 }
                 return
             }
-            self.ftpDataConnect(task) { (dataTask, error) in
-                if let error = error {
-                    completionHandler(nil, error)
-                    return
+            
+            let command = rfc3659enabled ? "MLST \(path)" : "LIST \(path)"
+            self.execute(command: command, on: task, completionHandler: { (response, error) in
+                defer {
+                    self.ftpQuit(task)
                 }
-                
-                guard dataTask != nil else {
-                    completionHandler(nil, error)
-                    return
+                do {
+                    if let error = error {
+                        throw error
+                    }
+                    
+                    guard let response = response, response.hasPrefix("250") || (response.hasPrefix("50") && rfc3659enabled) else {
+                        throw URLError(.badServerResponse, url: self.url(of: path))
+                    }
+                    
+                    if response.hasPrefix("500") {
+                        self.supportsRFC3659 = false
+                        self.attributesOfItem(path: path, rfc3659enabled: false, completionHandler: completionHandler)
+                    }
+                    
+                    let lines = response.components(separatedBy: "\n").compactMap { $0.isEmpty ? nil : $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    guard lines.count > 2 else {
+                        throw URLError(.badServerResponse, url: self.url(of: path))
+                    }
+                    let dirPath = path.deletingLastPathComponent
+                    let file: FileObject? = rfc3659enabled ?
+                        self.parseMLST(lines[1], in: dirPath) :
+                        (self.parseUnixList(lines[1], in: dirPath) ?? self.parseDOSList(lines[1], in: dirPath))
+                    self.dispatch_queue.async {
+                        completionHandler(file, nil)
+                    }
+                } catch {
+                    self.dispatch_queue.async {
+                        completionHandler(nil, error)
+                    }
                 }
-                let command = rfc3659enabled ? "MLST \(path)" : "LIST \(path)"
-                self.execute(command: command, on: task, completionHandler: { (response, error) in
-                    defer {
-                        self.ftpQuit(task)
-                    }
-                    do {
-                        if let error = error {
-                            throw error
-                        }
-                        
-                        guard let response = response, response.hasPrefix("250") || (response.hasPrefix("50") && rfc3659enabled) else {
-                            throw URLError(.badServerResponse, url: self.url(of: path))
-                        }
-                        
-                        if response.hasPrefix("500") {
-                            self.supportsRFC3659 = false
-                            self.attributesOfItem(path: path, rfc3659enabled: false, completionHandler: completionHandler)
-                        }
-                        
-                        let lines = response.components(separatedBy: "\n").compactMap { $0.isEmpty ? nil : $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                        guard lines.count > 2 else {
-                            throw URLError(.badServerResponse, url: self.url(of: path))
-                        }
-                        let dirPath = path.deletingLastPathComponent
-                        let file: FileObject? = rfc3659enabled ?
-                            self.parseMLST(lines[1], in: dirPath) :
-                            (self.parseUnixList(lines[1], in: dirPath) ?? self.parseDOSList(lines[1], in: dirPath))
-                        self.dispatch_queue.async {
-                            completionHandler(file, nil)
-                        }
-                    } catch {
-                        self.dispatch_queue.async {
-                            completionHandler(nil, error)
-                        }
-                    }
-                })
-            }
+            })
         }
     }
     
