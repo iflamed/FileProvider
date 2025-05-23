@@ -481,19 +481,19 @@ internal extension FTPFileProvider {
                      onProgress: @escaping (_ data: Data, _ totalReceived: Int64, _ expectedBytes: Int64) -> Void,
                      completionHandler: SimpleCompletionHandler) {
         
-        self.attributesOfItem(path: filePath) { (file, error) in
-            let totalSize = file?.size ?? -1
-            // Retreive data from server
-            self.ftpDataConnect(task) { (dataTask, error) in
-                if let error = error {
-                    completionHandler?(error)
-                    return
-                }
-                
-                guard let dataTask = dataTask else {
-                    completionHandler?(URLError(.badServerResponse, url: self.url(of: filePath)))
-                    return
-                }
+        // Retreive data from server
+        self.ftpDataConnect(task) { (dataTask, error) in
+            if let error = error {
+                completionHandler?(error)
+                return
+            }
+            
+            guard let dataTask = dataTask else {
+                completionHandler?(URLError(.badServerResponse, url: self.url(of: filePath)))
+                return
+            }
+            self.sizeOfItem(task, path: filePath, rfc3659enabled: self.supportsRFC3659) { (fileSize, error) in
+                let totalSize = Int64(fileSize ?? -1)
                 
                 // Send retreive command
                 self.execute(command: "TYPE I" + "\r\n" + "REST \(position)" + "\r\n" + "RETR \(filePath)", on: task) { (response, error) in
