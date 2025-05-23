@@ -342,6 +342,47 @@ open class FTPFileProvider: NSObject, FileProviderBasicRemote, FileProviderOpera
             })
         }
     }
+
+    open func sizeOfItem(_ task: FileProviderStreamTask, path apath: String, rfc3659enabled: Bool, completionHandler: @escaping (_ attributes: Int?, _ error: Error?) -> Void) {
+        let path = ftpPath(apath)
+        
+        let command = "SIZE \(path)"
+        self.execute(command: command, on: task, completionHandler: { (response, error) in
+            defer {
+                self.ftpQuit(task)
+            }
+            do {
+                if let error = error {
+                    throw error
+                }
+                
+                guard let response = response, response.hasPrefix("213") || response.hasPrefix("250") || (response.hasPrefix("50") && rfc3659enabled) else {
+                    throw URLError(.badServerResponse, url: self.url(of: path))
+                }
+                
+                if response.hasPrefix("500") {
+                    self.supportsRFC3659 = false
+                    self.sizeOfItem(task, path: path, rfc3659enabled: false, completionHandler: completionHandler)
+                    return
+                }
+                
+                let lines = response.components(separatedBy: "\n").compactMap { $0.isEmpty ? nil : $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                guard lines.count > 0 else {
+                    throw URLError(.badServerResponse, url: self.url(of: path))
+                }
+                let components = lines[0].components(separatedBy: " ").compactMap { $0.isEmpty ? nil : $0 }
+                guard components.count > 1 else { return }
+                let size = components[1]
+                self.dispatch_queue.async {
+                    completionHandler(Int(size), nil)
+                }
+            } catch {
+                self.dispatch_queue.async {
+                    completionHandler(nil, error)
+                }
+            }
+        })
+    }
     
     open func storageProperties(completionHandler: @escaping (_ volume: VolumeObject?) -> Void) {
         dispatch_queue.async {
